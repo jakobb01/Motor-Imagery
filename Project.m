@@ -58,7 +58,11 @@ function sub_bands = fawt(signal, levels_of_dec, p, q, r, s, beta)
     sub_bands = zeros(levels_of_dec + 1, length(signal)); % init sub_bands
     
     for level = 1:levels_of_dec
-
+        % get filters
+        [H, G] = fawt_filters(p, q, r, s, beta, level);
+        % apply filters
+        low_pass = filter(H, 1, current_signal);
+        high_pass = filter(G, 1, current_signal);
         % according to schematic on the ref paper
         sub_bands(level, :) = high_pass;
         current_signal = low_pass;
@@ -66,6 +70,28 @@ function sub_bands = fawt(signal, levels_of_dec, p, q, r, s, beta)
     % store the last low pass one as a sub_band
     sub_bands(levels + 1, :) = current_signal;
         
+end
+
+function [H, G] = fawt_filters(p, q, r, s, beta, level)
+    % filter parameters based of the paper
+    wp = ((1 - beta) * pi + eps) / p;
+    ws = pi / q;
+    w0 = ((1 - beta) * pi + eps) / r;
+    w1 = (p * pi) / (q * r);
+    w2 = (pi - eps) / r;
+    w3 = (pi + eps) / r;
+    function O = help_fun(w)
+        O = sqrt(2 - cos(w)) .* (1 + cos(w)) / 2;
+    end
+
+    % low pass filter
+    H = 0;
+    % high pass filter
+    G = 0;
+    % freq response from transfer function
+    H = freqz(H, 1);
+    G = freqz(G, 1);
+    % ref: https://www.mathworks.com/help/signal/ref/freqz.html
 end
 
 function P_cf = center_frequency(sb_signal, sample_rate)
