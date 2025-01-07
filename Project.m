@@ -85,9 +85,31 @@ function [H, G] = fawt_filters(p, q, r, s, beta, level)
     end
 
     % low pass filter
-    H = 0;
+    if (abs(w) < wp)
+        H = sqrt(p*q);
+    elseif (wp <= w && w <= ws)
+        H = sqrt(p*q) * help_fun(((w - wp) / (ws - wp)));
+    elseif (-ws <= w && w <= -wp)
+        H = sqrt(p*q) * help_fun(((pi - w + wp) / (ws - wp)));
+    elseif (abs(w) > ws)
+        H = 0;
+    else 
+        H = 0;
+        disp('H found no condition');
+    end
     % high pass filter
-    G = 0;
+    if (w0 <= w && w <= w1)
+        G = sqrt(2*r*s) * help_fun(((pi - w - w0) / (w1 - w0)));
+    elseif (w1 < w && w < w2)
+        G = sqrt(2*r*s);
+    elseif (w2 <= w && w <= w3)
+        G = sqrt(2*r*s) * help_fun(((w - w2) / (w3 - w2)));
+    elseif ((0 <= w && w < w0) || (w3 < w && w <= 2 * pi))
+        G = 0;
+    else 
+        G = 0;
+        disp('G found no condition');
+    end
     % freq response from transfer function
     H = freqz(H, 1);
     G = freqz(G, 1);
