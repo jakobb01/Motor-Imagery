@@ -49,10 +49,31 @@ function sub_bands = fawt(signal, levels_of_dec, p, q, r, s, beta)
     % paper pg.3 - ch.2.3
     % Using iterative filter bank, the raw signal is decomposed into 5th level
 
+    % use formulas provided in paper to create fawt.
     % low pass filter
         % H(w)
     % high pass filter
         % G(w)
+    current_signal = signal;
+    sub_bands = zeros(levels_of_dec + 1, length(signal)); % init sub_bands
+    
+    for level = 1:levels_of_dec
+
+        % according to schematic on the ref paper
+        sub_bands(level, :) = high_pass;
+        current_signal = low_pass;
+    end
+    % store the last low pass one as a sub_band
+    sub_bands(levels + 1, :) = current_signal;
+        
+end
+
+function P_cf = center_frequency(sb_signal, sample_rate)
+    % as they describe in the paper
+    N = length(sb_signal);
+    freq = (0:N-1) * (sample_rate / N); 
+    pow = abs(fft(sb_signal)).^2; % Fourier transform seperately
+    P_cf = sum(freq .* pow) / sum(pow);
 end
 
 % FAWT on each channel
@@ -78,18 +99,17 @@ for ch = 1:num_channels
         % calculate mean energy
         T_E = mean(sb_signal.^2);
         % calc      abs mean value
-        T_aav = mean(abs(sb_signal));
+        % T_aav = mean(abs(sb_signal));
         % calc      standard deviation
         T_std = std(sb_signal);
         % calc      voltality idx
         T_vi = sum(abs(diff(sb_signal))) / (num_samples - 1);
         % calc      center freq
-        P_cf = calculate_center_frequency(sb_signal, EEG.srate);
+        P_cf = center_frequency(sb_signal, sample_rate);
         
         % append all five parameters features
-        T_cov = 10;
-        % what is T_cov?
-        feature_vector = [feature_vector, T_E, T_std, T_cov, P_cf];
+        % T_cov = T_vi. Mention in the paper -> pg.2 (introduction)
+        feature_vector = [feature_vector, T_E, T_std, T_vi, P_cf];
     end
     features(ch, :) = feature_vector;
 end
@@ -102,7 +122,7 @@ end
 % Construction of distance matrix D. For each pair of
 % vectors xi and xj (1 ≤ j ≤ N), the distance matrix D = (di,j)
 % N×N is measured using Euclidean distance di,j
-% - create matrix D and use provided mdsclae function
+% - create matrix Ds
 D = pdist(features, 'euclidean');
 % ref: https://www.mathworks.com/help/stats/pdist.html
 
