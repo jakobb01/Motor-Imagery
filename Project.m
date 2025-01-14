@@ -10,6 +10,13 @@ EEG = pop_biosig([filepath filesep filename]);
 EEG = pop_chanedit(EEG, 'load',{['C:/Users/jakob/Documents/MATLAB/eeg-motor-movementimagery-dataset-1.0.0/files/BCI2000.locs'] 'filetype' 'autodetect'});
 EEG = pop_reref( EEG, []);
 
+% load events, as EEG.event is empty
+trigger_channel_index = EEG.nbchan; % Number of channels
+
+% extract events from the specified data channel
+EEG = pop_chanevent(EEG, trigger_channel_index);          % Threshold for detecting events (adjust as needed)
+
+EEG = eeg_checkset(EEG);
 
 %% 2. PREPROCESSING
 % paper description:
@@ -55,7 +62,7 @@ function sub_bands = fawt(signal, levels_of_dec, p, q, r, s, beta)
     % high pass filter
         % G(w)
     current_signal = signal;
-    sub_bands = zeros(levels_of_dec + 1, length(signal)); % init sub_bands
+    sub_bands = cell(levels_of_dec + 1, 1); % init sub_bands
     
     for level = 1:levels_of_dec
         % get filters
@@ -64,11 +71,11 @@ function sub_bands = fawt(signal, levels_of_dec, p, q, r, s, beta)
         low_pass = filter(H, 1, current_signal);
         high_pass = filter(G, 1, current_signal);
         % according to schematic on the ref paper
-        sub_bands(level, :) = high_pass;
+        sub_bands{level} = high_pass;
         current_signal = low_pass;
     end
     % store the last low pass one as a sub_band
-    sub_bands(levels + 1, :) = current_signal;
+    sub_bands{levels_of_dec + 1} = current_signal;
         
 end
 
@@ -84,36 +91,44 @@ function [H, G] = fawt_filters(p, q, r, s, beta, level)
         O = sqrt(2 - cos(w)) .* (1 + cos(w)) / 2;
     end
 
+    w = linspace(0, 2 * pi, 1024);
+
     % low pass filter
-    if (abs(w) < wp)
-        H = sqrt(p*q);
-    elseif (wp <= w && w <= ws)
-        H = sqrt(p*q) * help_fun(((w - wp) / (ws - wp)));
-    elseif (-ws <= w && w <= -wp)
-        H = sqrt(p*q) * help_fun(((pi - w + wp) / (ws - wp)));
-    elseif (abs(w) > ws)
-        H = 0;
-    else 
-        H = 0;
-        disp('H found no condition');
+    H = zeros(1, length(w));
+    for i = 1:length(w)
+        if (abs(w(i)) < wp)
+            H(i) = sqrt(p*q);
+        elseif (wp <= w(i) && w(i) <= ws)
+            H(i) = sqrt(p*q) * help_fun(((w(i) - wp) / (ws - wp)));
+        elseif (-ws <= w(i) && w(i) <= -wp)
+            H(i) = sqrt(p*q) * help_fun(((pi - w(i) + wp) / (ws - wp)));
+        elseif (abs(w(i)) > ws)
+            H(i) = 0;
+        else 
+            H(i) = 0;
+            disp('H found no condition');
+        end
     end
     % high pass filter
-    if (w0 <= w && w <= w1)
-        G = sqrt(2*r*s) * help_fun(((pi - w - w0) / (w1 - w0)));
-    elseif (w1 < w && w < w2)
-        G = sqrt(2*r*s);
-    elseif (w2 <= w && w <= w3)
-        G = sqrt(2*r*s) * help_fun(((w - w2) / (w3 - w2)));
-    elseif ((0 <= w && w < w0) || (w3 < w && w <= 2 * pi))
-        G = 0;
-    else 
-        G = 0;
-        disp('G found no condition');
+    G = zeros(1, length(w));
+    for i = 1:length(w)
+        if (w0 <= w(i) && w(i) <= w1)
+            G(i) = sqrt(2*r*s) * help_fun(((pi - w(i) - w0) / (w1 - w0)));
+        elseif (w1 < w(i) && w(i) < w2)
+            G(i) = sqrt(2*r*s);
+        elseif (w2 <= w(i) && w(i) <= w3)
+            G(i) = sqrt(2*r*s) * help_fun(((w(i) - w2) / (w3 - w2)));
+        elseif ((0 <= w(i) && w(i) < w0) || (w3 < w(i) && w(i) <= 2 * pi))
+            G(i) = 0;
+        else 
+            G(i) = 0;
+            disp('G found no condition');
+        end
     end
-    % freq response from transfer function
-    H = freqz(H, 1);
-    G = freqz(G, 1);
-    % ref: https://www.mathworks.com/help/signal/ref/freqz.html
+    % freq response from transfer function with inverse FFT
+    H = ifft(ifftshift(H));
+    G = ifft(ifftshift(G));
+    % old ref: https://www.mathworks.com/help/signal/ref/freqz.html
 end
 
 function P_cf = center_frequency(sb_signal, sample_rate)
@@ -131,33 +146,36 @@ num_samples = size(EEG.data, 2);
 
 % F is a 60-dimensions feature vector, but we construct matrix, because of
 % the channels
-features = zeros(num_channels, 60); 
+features = zeros(num_channels, (levels_of_dec + 1) * 4);
 
 for ch = 1:num_channels
     signal = EEG.data(ch, :);
-    sub_bands = fawt(signal, levels_of_dec, p, q, r, s, beta);
+    sub_bands_cell = fawt(signal, levels_of_dec, p, q, r, s, beta);
     % !important!
     % the sub-band signals reconstructed by FAWT are denoted as SB
    
     % get features from each sub-band
     feature_vector = [];
-    for sb = 1:levels_of_dec
-        % get sb signal
-        sb_signal = sub_bands(sb, :); 
-        % calculate mean energy
-        T_E = mean(sb_signal.^2);
-        % calc      abs mean value
-        % T_aav = mean(abs(sb_signal));
-        % calc      standard deviation
-        T_std = std(sb_signal);
-        % calc      voltality idx
-        T_vi = sum(abs(diff(sb_signal))) / (num_samples - 1);
-        % calc      center freq
-        P_cf = center_frequency(sb_signal, sample_rate);
-        
-        % append all five parameters features
-        % T_cov = T_vi. Mention in the paper -> pg.2 (introduction)
-        feature_vector = [feature_vector, T_E, T_std, T_vi, P_cf];
+    for sb_idx = 1:length(sub_bands_cell )
+        sb_signal = sub_bands_cell {sb_idx};
+        if ~isempty(sb_signal) % Ensure sub-band signal is not empty
+            % get sb signal
+            % sb_signal = sub_bands_cell(sb, :); 
+            % calculate mean energy
+            T_E = mean(sb_signal.^2);
+            % calc      abs mean value
+            % T_aav = mean(abs(sb_signal));
+            % calc      standard deviation
+            T_std = std(sb_signal);
+            % calc      voltality idx
+            T_vi = sum(abs(diff(sb_signal))) / (num_samples - 1);
+            % calc      center freq
+            P_cf = center_frequency(sb_signal, sample_rate);
+            
+            % append all five parameters features
+            % T_cov = T_vi. Mention in the paper -> pg.2 (introduction)
+            feature_vector = [feature_vector, T_E, T_std, T_vi, P_cf];
+        end
     end
     features(ch, :) = feature_vector;
 end
@@ -171,10 +189,10 @@ end
 % vectors xi and xj (1 ≤ j ≤ N), the distance matrix D = (di,j)
 % N×N is measured using Euclidean distance di,j
 % - create matrix Ds
-D = pdist(features, 'euclidean');
+D = pdist(real(features), 'euclidean');
 % ref: https://www.mathworks.com/help/stats/pdist.html
 
-% For each subject a traversal searching for d from 2 to 60 is performed on MDS
+% For each subject a traversal searching for d  from 2 to 60 is performed on MDS
 p = 5; % change when testing
 [reduced_features, ~] = mdscale(D, p);
 % ref: https://www.mathworks.com/help/stats/mdscale.html
@@ -182,6 +200,56 @@ p = 5; % change when testing
 %% 5. Classification with LDA and others classificators 
 % what we get out of mdscale function we use as an input to LDA
 % provided in matlab: MdlLinear = fitcdiscr(meas,species);
+
+labels = zeros(size(reduced_features, 1), 1);
+
+% Iterate through events and assign labels
+for i = 1:length(EEG.event)
+    if strcmp(EEG.event(i).type, '769') % Example event code for one class
+        start_sample = EEG.event(i).latency;
+        % Assuming a fixed window for feature extraction, you'd need to calculate the end
+        % Or, if you extracted features based on epochs, you'd label the corresponding epoch's features
+        % Example: Assuming features correspond 1:1 with samples for simplicity
+        labels(start_sample) = 1; % Assign label 1
+    elseif strcmp(EEG.event(i).type, '770') % Example event code for another class
+        start_sample = EEG.event(i).latency;
+        labels(start_sample) = 2; % Assign label 2
+    end
+end
+
+% split the data into training and testing sets
+c = cvpartition(labels, 'HoldOut', 0.3); % 30% for testing
+train_indices = training(c);
+test_indices = test(c);
+
+train_features = reduced_features(train_indices, :);
+test_features = reduced_features(test_indices, :);
+train_labels = labels(train_indices);
+test_labels = labels(test_indices);
+
+% Train LDA classifier
+lda_model = fitcdiscr(train_features, train_labels);
+
+% calculate accuracy
+predicted_labels = predict(lda_model, test_features);
+accuracy = sum(predicted_labels == test_labels) / length(test_labels) * 100;
+fprintf('Classification Accuracy: %.2f%%\n', accuracy);
+
+% Visualize the reduced features (2D or 3D)
+figure;
+if size(reduced_features, 2) == 2
+    gscatter(reduced_features(:, 1), reduced_features(:, 2), labels);
+    xlabel('Feature 1');
+    ylabel('Feature 2');
+    title('2D Visualization of Reduced Features');
+elseif size(reduced_features, 2) == 3
+    scatter3(reduced_features(:, 1), reduced_features(:, 2), reduced_features(:, 3), 15, labels, 'filled');
+    xlabel('Feature 1');
+    ylabel('Feature 2');
+    zlabel('Feature 3');
+    title('3D Visualization of Reduced Features');
+end
+
 
 %% 6.Compare classificators between each other
 % 
