@@ -11,12 +11,7 @@ EEG = pop_chanedit(EEG, 'load',{['C:/Users/jakob/Documents/MATLAB/eeg-motor-move
 EEG = pop_reref( EEG, []);
 
 % load events, as EEG.event is empty
-trigger_channel_index = EEG.nbchan; % Number of channels
 
-% extract events from the specified data channel
-EEG = pop_chanevent(EEG, trigger_channel_index);          % Threshold for detecting events (adjust as needed)
-
-EEG = eeg_checkset(EEG);
 
 %% 2. PREPROCESSING
 % paper description:
@@ -157,10 +152,9 @@ for ch = 1:num_channels
     % get features from each sub-band
     feature_vector = [];
     for sb_idx = 1:length(sub_bands_cell )
+        % get sb signal
         sb_signal = sub_bands_cell {sb_idx};
         if ~isempty(sb_signal) % Ensure sub-band signal is not empty
-            % get sb signal
-            % sb_signal = sub_bands_cell(sb, :); 
             % calculate mean energy
             T_E = mean(sb_signal.^2);
             % calc      abs mean value
@@ -184,7 +178,7 @@ end
 % F = [TE Tstd Tcov Pcf ]
 % should get F 60 dimension vector
 
-%% 4. feature reduction of vector F - MDS (razišči kako deluje)
+%% 4. feature reduction of vector F - MDS
 % Construction of distance matrix D. For each pair of
 % vectors xi and xj (1 ≤ j ≤ N), the distance matrix D = (di,j)
 % N×N is measured using Euclidean distance di,j
@@ -201,33 +195,21 @@ p = 5; % change when testing
 % what we get out of mdscale function we use as an input to LDA
 % provided in matlab: MdlLinear = fitcdiscr(meas,species);
 
-labels = zeros(size(reduced_features, 1), 1);
+% create labels
 
-% Iterate through events and assign labels
-for i = 1:length(EEG.event)
-    if strcmp(EEG.event(i).type, '769') % Example event code for one class
-        start_sample = EEG.event(i).latency;
-        % Assuming a fixed window for feature extraction, you'd need to calculate the end
-        % Or, if you extracted features based on epochs, you'd label the corresponding epoch's features
-        % Example: Assuming features correspond 1:1 with samples for simplicity
-        labels(start_sample) = 1; % Assign label 1
-    elseif strcmp(EEG.event(i).type, '770') % Example event code for another class
-        start_sample = EEG.event(i).latency;
-        labels(start_sample) = 2; % Assign label 2
-    end
-end
 
 % split the data into training and testing sets
-c = cvpartition(labels, 'HoldOut', 0.3); % 30% for testing
-train_indices = training(c);
-test_indices = test(c);
+
+
+train_indices = 0;
+test_indices = 0;
 
 train_features = reduced_features(train_indices, :);
 test_features = reduced_features(test_indices, :);
 train_labels = labels(train_indices);
 test_labels = labels(test_indices);
 
-% Train LDA classifier
+% train LDA classifier
 lda_model = fitcdiscr(train_features, train_labels);
 
 % calculate accuracy
@@ -235,20 +217,7 @@ predicted_labels = predict(lda_model, test_features);
 accuracy = sum(predicted_labels == test_labels) / length(test_labels) * 100;
 fprintf('Classification Accuracy: %.2f%%\n', accuracy);
 
-% Visualize the reduced features (2D or 3D)
-figure;
-if size(reduced_features, 2) == 2
-    gscatter(reduced_features(:, 1), reduced_features(:, 2), labels);
-    xlabel('Feature 1');
-    ylabel('Feature 2');
-    title('2D Visualization of Reduced Features');
-elseif size(reduced_features, 2) == 3
-    scatter3(reduced_features(:, 1), reduced_features(:, 2), reduced_features(:, 3), 15, labels, 'filled');
-    xlabel('Feature 1');
-    ylabel('Feature 2');
-    zlabel('Feature 3');
-    title('3D Visualization of Reduced Features');
-end
+% Visualize
 
 
 %% 6.Compare classificators between each other
